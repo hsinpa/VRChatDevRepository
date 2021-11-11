@@ -1,20 +1,25 @@
-Shader "Unlit/ToonShader"
+Shader "Hsinpa/ToonShader"
 {
     Properties
     {
-        _MainTex ("Texture", 2D) = "white" {}
+        [Header(Basic)]
+        [MainTexture] _MainTex ("Texture", 2D) = "white" {}
         _AmbientLight("AmbientLight", Color) = (1,1,1,1)
 
+        [Header(Rim Light)]
         _RimLightColor("RimLightColor", Color) = (1,1,1,1)
         _RimLightPower("RimLightPower", Range(0, 5)) = 1
         _RimLightStrength("RimLightStrength", Range(0, 1)) = 0.5
 
-        _ToonShaderThreshold("ToonShaderThreshold", Range(0, 2)) = 1
+        [Header(Bling Phong)]
+        _ToonShaderStyleTex("ToonShaderStyleTex",  2D) = "white" {}
+        _ToonShaderThreshold("ToonShaderThreshold", Range(0.05, 1)) = 0.1
         _ToonShaderStrength("ToonShaderStrength", Range(0, 1)) = 0.5
+        _ToonShaderGradientColor("ToonShaderGradientColor", Color) = (1,1,1,1)
 
         _SpecularColor("SpecularColor", Color) = (1,1,1,1)
         _SpecularPower("SpecularPower", Range(0, 32)) = 1
-        _SpecularStrength("SpecularStrength", Range(0, 1)) = 0.5
+        _SpecularStrength("SpecularStrength", Range(0, 3)) = 1
     }
     SubShader
     {
@@ -47,9 +52,13 @@ Shader "Unlit/ToonShader"
                 float3 vertexWorldPos : TEXCOORD3;
             };
 
+            struct SpecularLightStruct {
+                float4 lightColor;
+                float lightStrength;
+            };
+
             sampler2D _MainTex;
             float4 _MainTex_ST;
-
 
             //Light Related properties
             float4 _AmbientLight;
@@ -60,11 +69,13 @@ Shader "Unlit/ToonShader"
 
             float _ToonShaderThreshold;
             float _ToonShaderStrength;
+            float4 _ToonShaderGradientColor;
+            sampler2D _ToonShaderStyleTex;
+            float4 _ToonShaderStyleTex_ST;
 
             float4 _SpecularColor;
             float _SpecularPower;
             float _SpecularStrength;
-
 
             v2f vert (appdata v)
             {
@@ -91,32 +102,49 @@ Shader "Unlit/ToonShader"
                 return rimLight * rimColor;
             }
 
-            fixed4 CalDiffuse(fixed4 mainTex, fixed4 lightColor, fixed lightStr) {
-                fixed4 diffuseCol = smoothstep(0.05, _ToonShaderThreshold, lightStr);
+            fixed4 CalDiffuse(fixed4 mainTex, fixed3 normal, fixed4 lightColor, fixed4 styleColor) {
+                fixed lightStr = dot(normal, normalize(_WorldSpaceLightPos0));
+
+                float smoothStepMin = 0.01;
+                fixed4 diffuseCol = smoothstep(smoothStepMin, _ToonShaderThreshold, lightStr);
+
+                if (lightStr >= smoothStepMin && lightStr < _ToonShaderThreshold) {
+                    diffuseCol *= _ToonShaderGradientColor;
+                }
+
+                if (lightStr < _ToonShaderThreshold) {
+                    diffuseCol *= styleColor * _AmbientLight;
+                }
+
                 return mainTex * lightColor * clamp(diffuseCol, 1 - _ToonShaderStrength, 1);
             }
 
-            fixed4 CalSpecular() {
-            
+            SpecularLightStruct CalSpecularLight(fixed3 vertexWorldPos, fixed3 normal) {
+                fixed3 V = normalize(vertexWorldPos - _WorldSpaceCameraPos);
+                fixed specularStr = dot(reflect(normalize(_WorldSpaceLightPos0), normal), V);
+                specularStr = pow(max(0, specularStr), _SpecularPower) * _SpecularStrength;
+                
+                SpecularLightStruct slStruct;
+                slStruct.lightColor = specularStr * _SpecularColor;
+                slStruct.lightStrength = saturate(specularStr);
+
+                return slStruct;
             }
 
             fixed4 frag (v2f i) : SV_Target
             {
                 fixed4 mainTex = tex2D(_MainTex, i.uv);
-                
+                fixed4 shadowStyleTex = tex2D(_ToonShaderStyleTex, fixed2(i.uv.x * 10, i.uv.y));
+
                 fixed4 rimLight = CalRimLight(i.normal, i.cameraDirection, _RimLightColor);
 
                 //PhongBling, ToonShading, Decide shadow side
-                fixed normalLightDot = dot(i.normal, normalize(_WorldSpaceLightPos0));
-                fixed4 diffuseCol = CalDiffuse(mainTex, _LightColor0, normalLightDot);
+                SpecularLightStruct specularStruct = CalSpecularLight(i.vertexWorldPos, i.normal);
+                fixed4 specularCol = specularStruct.lightColor;
+               
+                fixed4 diffuseCol = CalDiffuse(mainTex, i.normal, _LightColor0, shadowStyleTex);
 
-                fixed3 V = normalize(i.vertexWorldPos - _WorldSpaceCameraPos);
-                fixed specularStr = dot( reflect(normalize(_WorldSpaceLightPos0), i.normal), V);
-                      specularStr = pow(max(0, specularStr), _SpecularPower) * _SpecularStrength;
-                fixed4 specularCol = specularStr * _SpecularColor;
-
-
-                fixed4 finalColor = diffuseCol + _AmbientLight + rimLight + specularCol;
+                fixed4 finalColor = diffuseCol + rimLight + specularCol;
 
                 return finalColor;
             }
