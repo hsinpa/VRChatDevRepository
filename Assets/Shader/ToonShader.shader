@@ -13,6 +13,8 @@ Shader "Hsinpa/ToonShader"
 
         [Header(Bling Phong)]
         _ToonShaderStyleTex("ToonShaderStyleTex",  2D) = "white" {}
+        _ToonShaderNoiseTex("ToonShaderNoiseTex",  2D) = "white" {}
+        _ToonShaderNoiseDisort("ToonShaderNoiseDisort", Range(0, 1)) = 0
         _ToonShaderThreshold("ToonShaderThreshold", Range(0.05, 1)) = 0.1
         _ToonShaderStrength("ToonShaderStrength", Range(0, 1)) = 0.5
         _ToonShaderGradientColor("ToonShaderGradientColor", Color) = (1,1,1,1)
@@ -72,6 +74,9 @@ Shader "Hsinpa/ToonShader"
             float4 _ToonShaderGradientColor;
             sampler2D _ToonShaderStyleTex;
             float4 _ToonShaderStyleTex_ST;
+            sampler2D _ToonShaderNoiseTex;
+            float4 _ToonShaderNoiseTex_ST;
+            float _ToonShaderNoiseDisort;
 
             float4 _SpecularColor;
             float _SpecularPower;
@@ -103,20 +108,22 @@ Shader "Hsinpa/ToonShader"
             }
 
             fixed4 CalDiffuse(fixed4 mainTex, fixed3 normal, fixed4 lightColor, fixed4 styleColor) {
-                fixed lightStr = dot(normal, normalize(_WorldSpaceLightPos0));
-
                 float smoothStepMin = 0.01;
-                fixed4 diffuseCol = smoothstep(smoothStepMin, _ToonShaderThreshold, lightStr);
+                fixed lightStr = dot(normal, normalize(_WorldSpaceLightPos0));
+                fixed smoothLightStr = smoothstep(smoothStepMin, _ToonShaderThreshold, lightStr);
+
+                fixed4 diffuseCol = mainTex * lightColor;
+                fixed shadowHardness = clamp(smoothLightStr, 1 - _ToonShaderStrength, 1);
 
                 if (lightStr >= smoothStepMin && lightStr < _ToonShaderThreshold) {
                     diffuseCol *= _ToonShaderGradientColor;
                 }
 
-                if (lightStr < _ToonShaderThreshold) {
-                    diffuseCol *= styleColor * _AmbientLight;
+                if ( lightStr < _ToonShaderThreshold) {
+                    diffuseCol *= lerp(styleColor, fixed4(1, 1, 1, 1), shadowHardness) ;
                 }
 
-                return mainTex * lightColor * clamp(diffuseCol, 1 - _ToonShaderStrength, 1);
+                return diffuseCol * shadowHardness;
             }
 
             SpecularLightStruct CalSpecularLight(fixed3 vertexWorldPos, fixed3 normal) {
@@ -134,7 +141,9 @@ Shader "Hsinpa/ToonShader"
             fixed4 frag (v2f i) : SV_Target
             {
                 fixed4 mainTex = tex2D(_MainTex, i.uv);
-                fixed4 shadowStyleTex = tex2D(_ToonShaderStyleTex, fixed2(i.uv.x * 10, i.uv.y));
+
+                fixed4 shadowNoiseTex = tex2D(_ToonShaderNoiseTex, fixed2(i.uv.x * _ToonShaderNoiseDisort, i.uv.y * _ToonShaderNoiseDisort));
+                fixed4 shadowStyleTex = tex2D(_ToonShaderStyleTex, fixed2(i.uv.x * 10 * shadowNoiseTex.x, i.uv.y * 10 * shadowNoiseTex.y));
 
                 fixed4 rimLight = CalRimLight(i.normal, i.cameraDirection, _RimLightColor);
 
@@ -144,7 +153,7 @@ Shader "Hsinpa/ToonShader"
                
                 fixed4 diffuseCol = CalDiffuse(mainTex, i.normal, _LightColor0, shadowStyleTex);
 
-                fixed4 finalColor = diffuseCol + rimLight + specularCol;
+                fixed4 finalColor = diffuseCol + rimLight + specularCol + _AmbientLight;
 
                 return finalColor;
             }
